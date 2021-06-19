@@ -64,7 +64,7 @@ void Watchy7SEG::drawDate(){
     display.println(currentTime.Year + YEAR_OFFSET);// offset from 1970, since year is stored in uint8_t
 }
 void Watchy7SEG::drawSteps(){
-    uint32_t stepCount = sensor.getCounter();
+    uint32_t stepCount = getSteps();
     display.drawBitmap(10, 165, steps, 19, 23, DARKMODE ? GxEPD_WHITE : GxEPD_BLACK);
     display.setCursor(35, 190);
     display.println(stepCount);

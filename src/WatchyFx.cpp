@@ -1,4 +1,4 @@
-#include "Watchy.h"
+#include "WatchyFx.h"
 
 DS3232RTC Watchy::RTC(false); 
 GxEPD2_BW<GxEPD2_154_D67, GxEPD2_154_D67::HEIGHT> Watchy::display(GxEPD2_154_D67(CS, DC, RESET, BUSY));
@@ -10,6 +10,8 @@ RTC_DATA_ATTR bool WIFI_CONFIGURED;
 RTC_DATA_ATTR bool BLE_CONFIGURED;
 RTC_DATA_ATTR weatherData currentWeather;
 RTC_DATA_ATTR int weatherIntervalCounter = WEATHER_UPDATE_INTERVAL;
+// day of the last step counter reset
+RTC_DATA_ATTR int last_step_reset_day = 0;
 
 String getValue(String data, char separator, int index)
 {
@@ -645,6 +647,16 @@ weatherData Watchy::getWeatherData(){
         weatherIntervalCounter++;
     }
     return currentWeather;
+}
+
+uint32_t Watchy::getSteps() {
+    if (last_step_reset_day != currentTime.Day) {
+        // reset the counter
+        sensor.resetStepCounter();
+        last_step_reset_day = currentTime.Day;
+    }
+
+    return sensor.getCounter();
 }
 
 float Watchy::getBatteryVoltage(){

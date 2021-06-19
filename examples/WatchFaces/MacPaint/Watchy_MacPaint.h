@@ -1,7 +1,7 @@
 #ifndef WATCHY_MACPAINT_H
 #define WATCHY_MACPAINT_H
 
-#include <Watchy.h>
+#include <WatchyFx.h>
 #include "macpaint.h"
 
 class WatchyMacPaint : public Watchy{

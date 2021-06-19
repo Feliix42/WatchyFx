@@ -42,6 +42,7 @@ class Watchy {
         void setupWifi();
         bool connectWiFi();
         weatherData getWeatherData();
+        uint32_t getSteps();
         void updateFWBegin();
 
         void showWatchFace(bool partialRefresh);
