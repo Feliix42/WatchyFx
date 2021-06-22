@@ -28,6 +28,7 @@ class Watchy {
         Watchy();
         void init(String datetime = "");
         void deepSleep();
+        void enterDowntime();
         float getBatteryVoltage();
         void vibMotor(uint8_t intervalMs = 100, uint8_t length = 20);
 
@@ -39,12 +40,14 @@ class Watchy {
         void showAccelerometer();
         void showUpdateFW();
         void setTime();
+        void syncWithNtp(bool force_update = false);
         void setupWifi();
         bool connectWiFi();
         weatherData getWeatherData();
         uint32_t getSteps();
         void updateFWBegin();
 
+        void showBlank();
         void showWatchFace(bool partialRefresh);
         virtual void drawWatchFace(); //override this method for different watch faces
 

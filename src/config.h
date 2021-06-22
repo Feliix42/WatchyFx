@@ -35,6 +35,7 @@
 #define WIFI_AP_TIMEOUT 60
 #define WIFI_AP_SSID "Watchy AP"
 //menu
+#define DEEPSLEEP_STATE -2
 #define WATCHFACE_STATE -1
 #define MAIN_MENU_STATE 0
 #define APP_STATE 1
@@ -48,6 +49,15 @@
 #define SET_MONTH 3
 #define SET_DAY 4
 #define YEAR_OFFSET 1970
+
+// Downtime
+#define DOWNTIME_START_HOUR 23
+#define DOWNTIME_END_HOUR 6
+
+// NTP Settings
+#define NTP_SERVER "pool.ntp.org"
+#define NTP_TZ_OFFSET 3600 // 1 * 60 * 60
+
 //BLE OTA
 #define BLE_DEVICE_NAME "Watchy BLE OTA"
 #define WATCHFACE_NAME "Watchy 7 Segment"

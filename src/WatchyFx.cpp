@@ -12,27 +12,29 @@ RTC_DATA_ATTR weatherData currentWeather;
 RTC_DATA_ATTR int weatherIntervalCounter = WEATHER_UPDATE_INTERVAL;
 // day of the last step counter reset
 RTC_DATA_ATTR int last_step_reset_day = 0;
+RTC_DATA_ATTR unsigned wakeCountdown = 0;
 
 String getValue(String data, char separator, int index)
 {
-  int found = 0;
-  int strIndex[] = {0, -1};
-  int maxIndex = data.length()-1;
-
-  for(int i=0; i<=maxIndex && found<=index; i++){
-    if(data.charAt(i)==separator || i==maxIndex){
-        found++;
-        strIndex[0] = strIndex[1]+1;
-        strIndex[1] = (i == maxIndex) ? i+1 : i;
+    int found = 0;
+    int strIndex[] = {0, -1};
+    int maxIndex = data.length()-1;
+  
+    for(int i=0; i<=maxIndex && found<=index; i++){
+        if(data.charAt(i)==separator || i==maxIndex){
+            found++;
+            strIndex[0] = strIndex[1]+1;
+            strIndex[1] = (i == maxIndex) ? i+1 : i;
+        }
     }
-  }
-
-  return found>index ? data.substring(strIndex[0], strIndex[1]) : "";
+  
+    return found>index ? data.substring(strIndex[0], strIndex[1]) : "";
 }
 
 Watchy::Watchy(){} //constructor
 
 void Watchy::init(String datetime){
+    bool short_sleep = true;
     esp_sleep_wakeup_cause_t wakeup_reason;
     wakeup_reason = esp_sleep_get_wakeup_cause(); //get wake up reason
     Wire.begin(SDA, SCL); //init i2c
@@ -54,40 +56,113 @@ void Watchy::init(String datetime){
                 time_t t = makeTime(tm);
                 RTC.set(t);
                 RTC.read(currentTime);           
+
+                syncWithNtp();
                 showWatchFace(true); //partial updates on tick
             }
             break;        
         #endif
         case ESP_SLEEP_WAKEUP_EXT0: //RTC Alarm
+            // reset the RTC alarm flags, either ALARM_1 (downtime end) or ALARM_2 (regular tick)
+            if (RTC.alarm(ALARM_1)) {
+                // re-enable alarm
+                RTC.alarmInterrupt(ALARM_1, false);
+                RTC.alarmInterrupt(ALARM_2, true);
+            }
             RTC.alarm(ALARM_2); //resets the alarm flag in the RTC
-            if(guiState == WATCHFACE_STATE){
+
+            if(guiState == WATCHFACE_STATE || guiState == DEEPSLEEP_STATE) {
                 RTC.read(currentTime);
-                showWatchFace(true); //partial updates on tick
+                syncWithNtp();
+
+                // check if watch is in downtime mode
+                if (currentTime.Hour >= DOWNTIME_START_HOUR || currentTime.Hour < DOWNTIME_END_HOUR) {
+                    // was the clock manually awakened?
+                    if (wakeCountdown > 0) {
+                        wakeCountdown--;
+                        showWatchFace(true); //partial updates on tick
+                    } else {
+                        // go to sleep, no need to show the watchface
+                        showBlank();
+                        short_sleep = false;
+
+                        // enable alarm interrupt
+                        RTC.alarmInterrupt(ALARM_1, true); 
+                        // disable alarm 2 until downtime ended
+                        RTC.alarmInterrupt(ALARM_2, false);
+                    }
+                } else {
+                    showWatchFace(true); //partial updates on tick
+                }
             }
             break;
         case ESP_SLEEP_WAKEUP_EXT1: //button Press
-            handleButtonPress();
+            // wake up in downtime, enable alarm 2
+            if (guiState == DEEPSLEEP_STATE) {
+                // re-enable alarm, set counter
+                RTC.alarmInterrupt(ALARM_2, true);
+                wakeCountdown = 5;
+
+                // state is automatically adjusted in showWatchFace
+                //guiState = WATCHFACE_STATE;
+                // draw watchface
+                RTC.read(currentTime);
+                showWatchFace(true);
+            } else {
+                handleButtonPress();
+            }
             break;
         default: //reset
             #ifndef ESP_RTC
             _rtcConfig(datetime);
             #endif
             _bmaConfig();
+            syncWithNtp(true);
             showWatchFace(false); //full update on reset
             break;
     }
-    deepSleep();
+
+    if (short_sleep) {
+        deepSleep();
+    } else {
+        enterDowntime();
+    }
 }
 
 void Watchy::deepSleep(){
-  #ifndef ESP_RTC
-  esp_sleep_enable_ext0_wakeup(RTC_PIN, 0); //enable deep sleep wake on RTC interrupt
-  #endif  
-  #ifdef ESP_RTC
-  esp_sleep_enable_timer_wakeup(60000000);
-  #endif 
-  esp_sleep_enable_ext1_wakeup(BTN_PIN_MASK, ESP_EXT1_WAKEUP_ANY_HIGH); //enable deep sleep wake on button press
-  esp_deep_sleep_start();
+    #ifndef ESP_RTC
+    esp_sleep_enable_ext0_wakeup(RTC_PIN, 0); //enable deep sleep wake on RTC interrupt
+    #endif 
+    #ifdef ESP_RTC
+    esp_sleep_enable_timer_wakeup(60000000);
+    #endif 
+    esp_sleep_enable_ext1_wakeup(BTN_PIN_MASK, ESP_EXT1_WAKEUP_ANY_HIGH); //enable deep sleep wake on button press
+    esp_deep_sleep_start();
+}
+
+/// Puts the watch to sleep until the end of the downtime period defined in config.h
+void Watchy::enterDowntime() {
+    #ifndef ESP_RTC
+    esp_sleep_enable_ext0_wakeup(RTC_PIN, 0); //enable deep sleep wake on RTC interrupt
+    #endif 
+    #ifdef ESP_RTC
+    // TODO: Handle ESP_RTC
+    esp_sleep_enable_timer_wakeup(60000000);
+    #endif 
+    esp_sleep_enable_ext1_wakeup(BTN_PIN_MASK, ESP_EXT1_WAKEUP_ANY_HIGH); //enable deep sleep wake on button press
+    esp_deep_sleep_start();
+}
+
+void Watchy::showBlank() {
+    display.init(0, false); //_initial_refresh to false to prevent full update on init
+    display.setFullWindow();
+
+    // display black screen
+    display.fillScreen(GxEPD_BLACK);
+
+    display.display(false); //partial refresh
+    display.hibernate();
+    guiState = DEEPSLEEP_STATE;
 }
 
 void Watchy::_rtcConfig(String datetime){
@@ -108,9 +183,53 @@ void Watchy::_rtcConfig(String datetime){
     //https://github.com/JChristensen/DS3232RTC
     RTC.squareWave(SQWAVE_NONE); //disable square wave output
     //RTC.set(compileTime()); //set RTC time to compile time
+
+    // wake the watch at the end of the downtime, keep disabled
+    RTC.setAlarm(ALM1_MATCH_HOURS, 0, 0, DOWNTIME_END_HOUR, 0);
+    RTC.alarmInterrupt(ALARM_1, false);
+
     RTC.setAlarm(ALM2_EVERY_MINUTE, 0, 0, 0, 0); //alarm wakes up Watchy every minute
     RTC.alarmInterrupt(ALARM_2, true); //enable alarm interrupt
     RTC.read(currentTime);
+}
+
+void Watchy::syncWithNtp(bool force_update) {
+    const char* ntpServer = NTP_SERVER;
+    const long gmtOffset_sec = NTP_TZ_OFFSET; // set time zone
+    const int daylightOffset_sec = 3600;// if observing Daylight saving time 3600 otherwise 0
+
+    // Watchy updates every minute but we really only need to sync a few times a day
+    if(force_update || currentTime.Hour % 8 == 0 && currentTime.Minute == 0){
+        // only run this at midnight,8am and 4pm
+        // three times a day to correct time drift.
+
+        // make sure WiFi is connected
+        if(connectWiFi()){
+            // wifi connected so proceed to get NTP time
+            struct tm timeinfo;
+
+            // get NTP Time
+            configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+            getLocalTime(&timeinfo);
+
+            // convert NTP time into proper format
+            tmElements_t tm;
+            tm.Month =  timeinfo.tm_mon +1;// 0-11 based month so we have to add 1
+            tm.Day =  timeinfo.tm_mday;
+            tm.Year =  timeinfo.tm_year +1900 - YEAR_OFFSET;//offset from 1970, since year is stored in uint8_t
+            tm.Hour =  timeinfo.tm_hour;
+            tm.Minute = timeinfo.tm_min;
+            tm.Second = timeinfo.tm_sec;
+            time_t t = makeTime(tm);
+
+            //set the RTC time to the NTP time
+            RTC.set(t);
+
+            // shut down the radio to save power
+            WiFi.mode(WIFI_OFF);
+            btStop();
+        }
+    }
 }
 
 void Watchy::handleButtonPress(){
@@ -592,12 +711,12 @@ void Watchy::showAccelerometer(){
 }
 
 void Watchy::showWatchFace(bool partialRefresh){
-  display.init(0, false); //_initial_refresh to false to prevent full update on init
-  display.setFullWindow();
-  drawWatchFace();
-  display.display(partialRefresh); //partial refresh
-  display.hibernate();
-  guiState = WATCHFACE_STATE;
+    display.init(0, false); //_initial_refresh to false to prevent full update on init
+    display.setFullWindow();
+    drawWatchFace();
+    display.display(partialRefresh); //partial refresh
+    display.hibernate();
+    guiState = WATCHFACE_STATE;
 }
 
 void Watchy::drawWatchFace(){
